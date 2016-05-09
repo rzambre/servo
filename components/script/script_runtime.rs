@@ -114,8 +114,12 @@ pub unsafe fn new_rt_and_cx() -> Runtime {
     unsafe extern "C" fn empty_wrapper_callback(_: *mut JSContext, _: *mut JSObject) -> bool { true }
     SetDOMCallbacks(runtime.rt(), &DOM_CALLBACKS);
     SetPreserveWrapperCallback(runtime.rt(), Some(empty_wrapper_callback));
-    // Pre barriers aren't working correctly at the moment
-    DisableIncrementalGC(runtime.rt());
+
+    if !get_pref("js.mem.gc.incremental.enabled").as_boolean().unwrap_or(true) {
+        DisableIncrementalGC(runtime.rt());
+    }
+
+    set_gc_zeal_options(runtime.cx());
 
     // Enable or disable the JITs.
     let rt_opts = &mut *RuntimeOptionsRef(runtime.rt());
@@ -375,3 +379,23 @@ unsafe extern fn trace_rust_roots(tr: *mut JSTracer, _data: *mut os::raw::c_void
     trace_traceables(tr);
     trace_roots(tr);
 }
+
+#[allow(unsafe_code)]
+#[cfg(feature = "debugmozjs")]
+unsafe fn set_gc_zeal_options(ctx: *mut JSContext) {
+    use js::jsapi::JS_SetGCZeal;
+
+    let level = match get_pref("js.mem.gc.zeal.level").as_i64() {
+        Some(level) if level >= 0 && level <= 14 => level as u8,
+        _ => return,
+    };
+    let frequency = match get_pref("js.mem.gc.zeal.frequency").as_i64() {
+        Some(frequency) if frequency >= 0 => frequency as u32,
+        _ => JS_DEFAULT_ZEAL_FREQ,
+    };
+    JS_SetGCZeal(ctx, level, frequency);
+}
+
+#[allow(unsafe_code)]
+#[cfg(not(feature = "debugmozjs"))]
+unsafe fn set_gc_zeal_options(_: *mut JSContext) {}
